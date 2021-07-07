@@ -26,6 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	mf "github.com/manifestival/manifestival"
 	"github.com/tektoncd/operator/pkg/apis/operator/v1alpha1"
+	"gotest.tools/v3/assert"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -330,4 +331,19 @@ func deploymentFor(t *testing.T, unstr unstructured.Unstructured) *appsv1.Deploy
 		t.Errorf("failed to load deployment yaml")
 	}
 	return deployment
+}
+
+func TestReplaceNamespaceInClusterInterceptor(t *testing.T) {
+	testData := path.Join("testdata", "test-replace-namespace-in-cluster-interceptor.yaml")
+	manifest, err := mf.ManifestFrom(mf.Recursive(testData))
+	assertNoEror(t, err)
+
+	manifest, err = manifest.Transform(injectNamespaceCRClusterInterceptorClientConfig("foobar"))
+	assertNoEror(t, err)
+
+	clusterInterceptor := manifest.Resources()[0].Object
+	service, _, err := unstructured.NestedFieldNoCopy(clusterInterceptor, "spec", "clientConfig", "service")
+	m := service.(map[string]interface{})
+	assertNoEror(t, err)
+	assert.Equal(t, "foobar", m["namespace"])
 }
