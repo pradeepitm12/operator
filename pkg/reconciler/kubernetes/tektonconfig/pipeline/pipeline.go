@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"reflect"
 
 	"github.com/tektoncd/operator/pkg/apis/operator/v1alpha1"
 
@@ -35,7 +36,7 @@ import (
 
 func CreatePipelineCR(instance v1alpha1.TektonComponent, client operatorv1alpha1.OperatorV1alpha1Interface) error {
 	configInstance := instance.(*v1alpha1.TektonConfig)
-	if _, err := ensureTektonPipelineExists(client.TektonPipelines(), configInstance.Spec.TargetNamespace); err != nil {
+	if _, err := ensureTektonPipelineExists(client.TektonPipelines(), configInstance); err != nil {
 		return errors.New(err.Error())
 	}
 	if _, err := waitForTektonPipelineState(client.TektonPipelines(), common.PipelineResourceName,
@@ -46,9 +47,18 @@ func CreatePipelineCR(instance v1alpha1.TektonComponent, client operatorv1alpha1
 	return nil
 }
 
-func ensureTektonPipelineExists(clients op.TektonPipelineInterface, targetNS string) (*v1alpha1.TektonPipeline, error) {
+func ensureTektonPipelineExists(clients op.TektonPipelineInterface, config *v1alpha1.TektonConfig) (*v1alpha1.TektonPipeline, error) {
 	tpCR, err := GetPipeline(clients, common.PipelineResourceName)
 	if err == nil {
+		// If pipelines params are changed in TektonConfig spec, then only update the Pipeline CR
+		if !reflect.DeepEqual(config.Spec.Pipeline.Params, tpCR.Spec.Params) {
+			tpCR.Spec.Params = config.Spec.Pipeline.Params
+			updated, err := clients.Update(context.TODO(), tpCR, metav1.UpdateOptions{})
+			if err != nil {
+				return nil, err
+			}
+			return updated, nil
+		}
 		return tpCR, err
 	}
 	if apierrs.IsNotFound(err) {
@@ -58,8 +68,9 @@ func ensureTektonPipelineExists(clients op.TektonPipelineInterface, targetNS str
 			},
 			Spec: v1alpha1.TektonPipelineSpec{
 				CommonSpec: v1alpha1.CommonSpec{
-					TargetNamespace: targetNS,
+					TargetNamespace: config.Spec.TargetNamespace,
 				},
+				Params: config.Spec.Pipeline.Params,
 			},
 		}
 		return clients.Create(context.TODO(), tpCR, metav1.CreateOptions{})

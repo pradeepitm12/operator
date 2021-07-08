@@ -27,11 +27,14 @@ import (
 	clientset "github.com/tektoncd/operator/pkg/client/clientset/versioned"
 	tektonpipelinereconciler "github.com/tektoncd/operator/pkg/client/injection/reconciler/operator/v1alpha1/tektonpipeline"
 	"github.com/tektoncd/operator/pkg/reconciler/common"
+	oscommon "github.com/tektoncd/operator/pkg/reconciler/openshift/common"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"knative.dev/pkg/logging"
 	pkgreconciler "knative.dev/pkg/reconciler"
 )
+
+const enableMetrics = "enableMetrics"
 
 // Reconciler implements controller.Reconciler for TektonPipeline resources.
 type Reconciler struct {
@@ -103,12 +106,18 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, tp *v1alpha1.TektonPipel
 	}
 
 	if err := r.extension.PreReconcile(ctx, tp); err != nil {
+		// If prereconcile updates the TektonConfig CR, it returns an error
+		// to reconcile
+		if err.Error() == "reconcile" {
+			return err
+		}
+		tp.GetStatus().MarkInstallFailed(err.Error())
 		return err
 	}
 	stages := common.Stages{
 		r.appendPipelineTarget,
 		r.transform,
-		common.Install,
+		r.filterAndInstall,
 		common.CheckDeployments,
 	}
 	manifest := r.manifest.Append()
@@ -143,6 +152,13 @@ func (r *Reconciler) transform(ctx context.Context, manifest *mf.Manifest, comp 
 		common.InjectLabelOnNamespace(),
 	}
 	extra = append(extra, r.extension.Transformers(instance)...)
+
+	// TODO: Move this to OpenShift Extension
+	tp := comp.(*v1alpha1.TektonPipeline)
+	if len(tp.Spec.Params) != 0 && tp.Spec.Params[0].Name == enableMetrics && tp.Spec.Params[0].Value == "false" {
+		extra = append(extra, oscommon.RemoveMonitoringLabel())
+	}
+
 	return common.Transform(ctx, manifest, instance, extra...)
 }
 
@@ -153,4 +169,32 @@ func (r *Reconciler) installed(ctx context.Context, instance v1alpha1.TektonComp
 	stages := common.Stages{r.appendPipelineTarget, r.transform}
 	err := stages.Execute(ctx, &installed, instance)
 	return &installed, err
+}
+
+var (
+	serviceMonitor mf.Predicate = mf.ByKind("ServiceMonitor")
+	smRole         mf.Predicate = mf.All(mf.ByKind("Role"), mf.ByName("openshift-pipelines-read"))
+	smRoleBinding  mf.Predicate = mf.All(mf.ByKind("RoleBinding"), mf.ByName("openshift-pipelines-prometheus-k8s-read-binding"))
+)
+
+func (r *Reconciler) filterAndInstall(ctx context.Context, manifest *mf.Manifest, comp v1alpha1.TektonComponent) error {
+	tp := comp.(*v1alpha1.TektonPipeline)
+
+	var installManifest, uninstallManifest mf.Manifest
+	installManifest = *manifest
+
+	// TODO: Move this to OpenShift Extension
+	if len(tp.Spec.Params) != 0 && tp.Spec.Params[0].Name == enableMetrics && tp.Spec.Params[0].Value == "false" {
+		installManifest = manifest.Filter(mf.Not(mf.Any(serviceMonitor, smRole, smRoleBinding)))
+		uninstallManifest = manifest.Filter(mf.Any(serviceMonitor, smRole, smRoleBinding))
+	}
+
+	if err := common.Install(ctx, &installManifest, tp); err != nil {
+		return err
+	}
+	if err := common.Uninstall(ctx, &uninstallManifest, tp); err != nil {
+		return err
+	}
+
+	return nil
 }

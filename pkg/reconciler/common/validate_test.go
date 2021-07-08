@@ -18,9 +18,10 @@ package common
 
 import (
 	"context"
+	"testing"
+
 	"github.com/tektoncd/operator/pkg/apis/operator/v1alpha1"
 	"gotest.tools/assert"
-	"testing"
 )
 
 func nullFunc() func(params *[]v1alpha1.Param) error {

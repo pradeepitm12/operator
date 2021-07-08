@@ -18,8 +18,9 @@ package tektonconfig
 
 import (
 	"context"
-	"github.com/tektoncd/operator/pkg/reconciler/common"
 	"regexp"
+
+	"github.com/tektoncd/operator/pkg/reconciler/common"
 
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"

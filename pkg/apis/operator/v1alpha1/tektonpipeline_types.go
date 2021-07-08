@@ -52,6 +52,9 @@ func (tp *TektonPipeline) GetStatus() TektonComponentStatus {
 // TektonPipelineSpec defines the desired state of TektonPipeline
 type TektonPipelineSpec struct {
 	CommonSpec `json:",inline"`
+	// The params to customize different components of Pipelines
+	// +optional
+	Params []Param `json:"params,omitempty"`
 }
 
 // TektonPipelineStatus defines the observed state of TektonPipeline

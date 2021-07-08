@@ -18,6 +18,7 @@ package tektonpipeline
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/tektoncd/operator/pkg/client/clientset/versioned"
 	operatorclient "github.com/tektoncd/operator/pkg/client/injection/client"
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"knative.dev/pkg/injection"
 	"knative.dev/pkg/logging"
 
@@ -47,9 +49,19 @@ const (
 	DefaultTargetNamespace          = "openshift-pipelines"
 	AnnotationPreserveNS            = "operator.tekton.dev/preserve-namespace"
 	AnnotationPreserveRBSubjectNS   = "operator.tekton.dev/preserve-rb-subject-namespace"
+	EnableMetrics                   = "enableMetrics"
 )
 
-// NoPlatform "generates" a NilExtension
+var defaultParamValue = v1alpha1.ParamValue{
+	Default:  "true",
+	Possible: []string{"true", "false"},
+}
+
+// PipelineParams defines the params defined for Pipelines with their default value
+var PipelineParams = map[string]v1alpha1.ParamValue{
+	EnableMetrics: defaultParamValue,
+}
+
 func OpenShiftExtension(ctx context.Context) common.Extension {
 	logger := logging.FromContext(ctx)
 	mfclient, err := mfc.NewClient(injection.GetConfig(ctx))
@@ -81,6 +93,26 @@ func (oe openshiftExtension) Transformers(comp v1alpha1.TektonComponent) []mf.Tr
 	}
 }
 func (oe openshiftExtension) PreReconcile(ctx context.Context, tc v1alpha1.TektonComponent) error {
+	pipelineInstance := tc.(*v1alpha1.TektonPipeline)
+
+	pipelineUpdated, err := common.ValidateParamsAndSetDefault(ctx,
+		&pipelineInstance.Spec.Params,
+		PipelineParams,
+		func(params *[]v1alpha1.Param) error { return nil })
+	if err != nil {
+		return err
+	}
+
+	if pipelineUpdated {
+		_, err := oe.operatorClientSet.OperatorV1alpha1().TektonPipelines().Update(ctx, pipelineInstance, metav1.UpdateOptions{})
+		if err != nil {
+			return err
+		}
+
+		// Returning error just to make reconcile it again so that further code gets updated TektonPipeline
+		return fmt.Errorf("reconcile")
+	}
+
 	koDataDir := os.Getenv(common.KoEnvKey)
 
 	// make sure that openshift-pipelines namespace exists
